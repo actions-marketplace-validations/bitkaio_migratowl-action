@@ -26,8 +26,13 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           IMAGE="ghcr.io/bitkaio/migratowl-runtime:${VERSION}"
-          if ! docker manifest inspect "${IMAGE}" &>/dev/null; then
-            echo "Runtime image ${IMAGE} not found — release bitkaio/migratowl first" >&2
+          TOKEN=$(curl -sf "https://ghcr.io/token?scope=repository:bitkaio/migratowl-runtime:pull" \
+            | jq -r '.token')
+          STATUS=$(curl -so /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "https://ghcr.io/v2/bitkaio/migratowl-runtime/manifests/${VERSION}")
+          if [ "$STATUS" != "200" ]; then
+            echo "Runtime image ${IMAGE} not found (HTTP ${STATUS}) — release bitkaio/migratowl first" >&2
             exit 1
           fi
           echo "Runtime image verified: ${IMAGE}"
