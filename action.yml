@@ -1,0 +1,133 @@
+name: 'Migratowl Dependency Scan'
+description: 'AI-powered dependency migration analyzer — discovers breaking upgrades, explains what failed, and tells you how to fix it.'
+author: 'bitkaio'
+branding:
+  icon: 'search'
+  color: 'blue'
+
+inputs:
+  anthropic-api-key:
+    description: 'Anthropic API key. Required unless openai-api-key is set.'
+    required: false
+    default: ''
+  openai-api-key:
+    description: 'OpenAI API key. Alternative to anthropic-api-key; sets MIGRATOWL_MODEL_PROVIDER=openai.'
+    required: false
+    default: ''
+  model:
+    description: 'Model name passed to MIGRATOWL_MODEL_NAME.'
+    required: false
+    default: 'claude-sonnet-4-6'
+  mode:
+    description: 'Version resolution mode: safe | normal.'
+    required: false
+    default: 'normal'
+  ecosystems:
+    description: 'Comma-separated list of ecosystems to scan (python, nodejs, go, rust, java). Empty = auto-detect all.'
+    required: false
+    default: ''
+  exclude-deps:
+    description: 'Comma-separated package names to skip entirely.'
+    required: false
+    default: ''
+  check-deps:
+    description: 'Override to force specific deps (auto-populated from PR context on bot PRs).'
+    required: false
+    default: ''
+  max-deps:
+    description: 'Hard cap on outdated dependencies to analyze.'
+    required: false
+    default: '50'
+  include-prerelease:
+    description: 'Consider pre-release versions when finding the latest version.'
+    required: false
+    default: 'false'
+  confidence-threshold:
+    description: 'Attribution confidence threshold passed to MIGRATOWL_CONFIDENCE_THRESHOLD.'
+    required: false
+    default: '0.7'
+  migratowl-version:
+    description: 'Runtime image tag and server version to use. Defaults to latest.'
+    required: false
+    default: 'latest'
+  scan-trigger:
+    description: 'Controls which PRs trigger a scan: bot (default) | deps-changed | always. Ignored on schedule triggers.'
+    required: false
+    default: 'bot'
+  results-destination:
+    description: 'Where to write results: pr-comment (default) | issue | artifact. On schedule triggers pr-comment is invalid.'
+    required: false
+    default: 'pr-comment'
+  fail-on-breaking:
+    description: 'Exit non-zero when is_breaking: true is found, making Migratowl a blocking check.'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    # ── Step 1: Determine scan eligibility (runs first to avoid wasting cluster setup) ──
+    - name: Determine scan eligibility
+      id: extract-deps
+      shell: bash
+      env:
+        SCAN_TRIGGER: ${{ inputs.scan-trigger }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        CHECK_DEPS_OVERRIDE: ${{ inputs.check-deps }}
+        GITHUB_REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}
+      run: ${{ github.action_path }}/scripts/extract-deps.sh
+
+    # ── Step 2: Set up kind cluster with Calico CNI ──────────────────────────
+    - name: Set up kind cluster
+      if: env.MIGRATOWL_SKIP != 'true'
+      shell: bash
+      env:
+        KIND_VERSION: v0.24.0
+        CALICO_VERSION: v3.28.2
+        ACTION_PATH: ${{ github.action_path }}
+      run: ${{ github.action_path }}/scripts/start-kind.sh
+
+    # ── Step 3: Pull runtime image and load into kind ────────────────────────
+    - name: Pull and load runtime image
+      if: env.MIGRATOWL_SKIP != 'true'
+      shell: bash
+      env:
+        MIGRATOWL_VERSION: ${{ inputs.migratowl-version }}
+      run: ${{ github.action_path }}/scripts/pull-runtime.sh
+
+    # ── Step 4: Install and start Migratowl API server ───────────────────────
+    - name: Start Migratowl server
+      if: env.MIGRATOWL_SKIP != 'true'
+      shell: bash
+      env:
+        MIGRATOWL_VERSION: ${{ inputs.migratowl-version }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        MIGRATOWL_MODEL_NAME: ${{ inputs.model }}
+        MIGRATOWL_CONFIDENCE_THRESHOLD: ${{ inputs.confidence-threshold }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: ${{ github.action_path }}/scripts/start-migratowl.sh
+
+    # ── Steps 5-7: Trigger scan, poll, and handle results ───────────────────
+    - name: Run scan
+      if: env.MIGRATOWL_SKIP != 'true'
+      shell: bash
+      env:
+        REPO_URL: https://github.com/${{ github.repository }}
+        BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        COMMIT_SHA_PR: ${{ github.event.pull_request.head.sha }}
+        COMMIT_SHA_PUSH: ${{ github.sha }}
+        MAX_DEPS: ${{ inputs.max-deps }}
+        MODE: ${{ inputs.mode }}
+        INCLUDE_PRERELEASE: ${{ inputs.include-prerelease }}
+        EXCLUDE_DEPS: ${{ inputs.exclude-deps }}
+        ECOSYSTEMS: ${{ inputs.ecosystems }}
+        RESULTS_DESTINATION: ${{ inputs.results-destination }}
+        FAIL_ON_BREAKING: ${{ inputs.fail-on-breaking }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}
+      run: ${{ github.action_path }}/scripts/trigger-scan.sh

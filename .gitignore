@@ -1,0 +1,12 @@
+# Runtime artifacts
+migratowl-scan-result.json
+/tmp/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
