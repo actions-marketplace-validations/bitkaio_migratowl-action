@@ -21,20 +21,6 @@ jobs:
           persist-credentials: true
           fetch-depth: 0
 
-      - name: Verify runtime image exists
-        run: |
-          IMAGE="ghcr.io/bitkaio/migratowl-runtime:latest"
-          TOKEN=$(curl -sf "https://ghcr.io/token?scope=repository:bitkaio/migratowl-runtime:pull" \
-            | jq -r '.token')
-          STATUS=$(curl -so /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${TOKEN}" \
-            "https://ghcr.io/v2/bitkaio/migratowl-runtime/manifests/latest")
-          if [ "$STATUS" != "200" ]; then
-            echo "Runtime image ${IMAGE} not found (HTTP ${STATUS}) — release bitkaio/migratowl first" >&2
-            exit 1
-          fi
-          echo "Runtime image verified: ${IMAGE}"
-
       - name: Move floating major tag
         env:
           VERSION: ${{ github.ref_name }}
